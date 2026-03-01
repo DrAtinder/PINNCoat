@@ -1,0 +1,93 @@
+# =========================
+# Python & Environments
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+venv/
+.venv/
+env/
+.env
+pip-log.txt
+pip-delete-this-directory.txt
+
+# =========================
+# IDEs & Tools
+# =========================
+.vscode/
+.idea/
+*.swp
+*.swo
+.spyderproject
+.spyproject
+
+# =========================
+# Jupyter Notebooks
+# =========================
+.ipynb_checkpoints
+profile_default/
+ipython_config.py
+
+# =========================
+# OS Generated Files
+# =========================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# =========================
+# PINNCoat Specific: ML Models & Logs
+# =========================
+# Exclude saved model weights (they get too large for Git)
+*.h5
+*.hdf5
+*.ckpt
+*.pkl
+*.msgpack
+models/
+checkpoints/
+
+# Exclude training logs (TensorBoard, etc.)
+logs/
+runs/
+wandb/
+
+# =========================
+# PINNCoat Specific: Geometry & Output Data
+# =========================
+# Exclude raw and processed CAD files (keep them local)
+data/raw/*.stl
+data/processed/*.npy
+data/processed/*.npz
+
+# Exclude simulation output files (ParaView, etc.)
+results/
+plots/
+*.vtk
+*.vtu
