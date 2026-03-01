@@ -41,13 +41,13 @@ class TestGeometryUtils(unittest.TestCase):
     def test_generate_fluid_points(self):
         bath_mesh, _, _ = load_stl_surface(self.bath_path, 10)
         anode_mesh, _, _ = load_stl_surface(self.anode_path, 10)
-        cathode_mesh, cathode_points, _ = load_cathode_nas(self.cathode_path, 10)
+        cathode_mesh, cathode_points, cathode_normals = load_cathode_nas(self.cathode_path, 10)
 
         obstacle_meshes = [anode_mesh, cathode_mesh]
         num_fluid_points = 50
 
         fluid_points = generate_fluid_points(
-            bath_mesh, obstacle_meshes, num_fluid_points, cathode_points=cathode_points, boundary_layer_ratio=0.5
+            bath_mesh, obstacle_meshes, num_fluid_points, cathode_points=cathode_points, cathode_normals=cathode_normals, boundary_layer_ratio=0.5
         )
 
         self.assertEqual(fluid_points.shape, (num_fluid_points, 3))
