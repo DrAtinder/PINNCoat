@@ -1,0 +1,4 @@
+trimesh
+numpy
+rtree
+meshio
