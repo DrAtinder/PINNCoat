@@ -1,10 +1,16 @@
+import os
+import sys
 import plotly.graph_objects as go
-from geometry_utils import load_stl_surface, load_cathode_nas, generate_fluid_points
+
+# Add the repository root directory to sys.path so we can import from src
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from src.pinncoat.geometry_utils import load_stl_surface, load_cathode_nas, generate_fluid_points
 
 def main():
-    bath_path = "data/raw/bath.stl"
-    anode_path = "data/raw/anode.stl"
-    cathode_path = "data/raw/cathode.nas"
+    # Adjust paths based on root directory
+    bath_path = os.path.join(os.path.dirname(__file__), "..", "data", "raw", "bath.stl")
+    anode_path = os.path.join(os.path.dirname(__file__), "..", "data", "raw", "anode.stl")
+    cathode_path = os.path.join(os.path.dirname(__file__), "..", "data", "raw", "cathode.nas")
 
     # Load and sample 1000 points from each boundary
     print("Loading boundaries...")
