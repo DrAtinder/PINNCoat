@@ -2,3 +2,4 @@ trimesh
 numpy
 rtree
 meshio
+plotly
