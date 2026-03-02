@@ -7,7 +7,9 @@ def get_phi_and_grad(params, model, x):
     """
     def phi_scalar(p, x_single):
         # Add a batch dimension to x_single, run model, and return scalar
-        return model.apply(p, jnp.expand_dims(x_single, 0))[0, 0]
+        # model can be an object with .apply or a callable (like state.apply_fn)
+        apply_fn = model.apply if hasattr(model, 'apply') else model
+        return apply_fn(p, jnp.expand_dims(x_single, 0))[0, 0]
 
     # Calculate both value and gradient, then vmap over the batch dimension
     return jax.vmap(jax.value_and_grad(phi_scalar, argnums=1), in_axes=(None, 0))(params, x)
@@ -23,7 +25,8 @@ def dirichlet_loss(params, model, x_anode, v_anode):
     """
     Computes the Mean Squared Error for the Dirichlet boundary condition (Anode).
     """
-    phi_anode = model.apply(params, x_anode)[:, 0]
+    apply_fn = model.apply if hasattr(model, 'apply') else model
+    phi_anode = apply_fn(params, x_anode)[:, 0]
     return jnp.mean((phi_anode - v_anode)**2)
 
 def robin_loss(params, model, x_cathode, normals, v_cathode, r_film, sigma):
