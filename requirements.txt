@@ -3,3 +3,6 @@ numpy
 rtree
 meshio
 plotly
+jax
+jaxlib
+flax
