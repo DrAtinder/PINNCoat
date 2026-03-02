@@ -12,7 +12,7 @@ def train_step_fixed(state, batch_data, weights):
     Standard training step with fixed penalty weights.
     """
     def loss_fn(params):
-        return compute_total_loss(params, state.apply_fn, **batch_data, weights=weights)
+        return compute_total_loss({'params': params}, state.apply_fn, **batch_data, weights=weights)
 
     loss, grads = jax.value_and_grad(loss_fn)(state.params)
     state = state.apply_gradients(grads=grads)
@@ -25,9 +25,9 @@ def train_step_adaptive(state, batch_data, dynamic_weights):
     Training step with adaptive loss balancing.
     """
     def losses_fn(params):
-        loss_e = energy_loss(params, state.apply_fn, batch_data['x_fluid'])
-        loss_d = dirichlet_loss(params, state.apply_fn, batch_data['x_anode'], batch_data['v_anode'])
-        loss_r = robin_loss(params, state.apply_fn, batch_data['x_cathode'], batch_data['normals'],
+        loss_e = energy_loss({'params': params}, state.apply_fn, batch_data['x_fluid'])
+        loss_d = dirichlet_loss({'params': params}, state.apply_fn, batch_data['x_anode'], batch_data['v_anode'])
+        loss_r = robin_loss({'params': params}, state.apply_fn, batch_data['x_cathode'], batch_data['normals'],
                             batch_data['v_cathode'], batch_data['r_film'], batch_data['sigma'])
         return loss_e, loss_d, loss_r
 
@@ -45,7 +45,7 @@ def train_step_adaptive(state, batch_data, dynamic_weights):
     updated_weights = alpha * dynamic_weights + (1 - alpha) * new_weights
 
     def total_loss_fn(params):
-        return compute_total_loss(params, state.apply_fn, **batch_data, weights=updated_weights)
+        return compute_total_loss({'params': params}, state.apply_fn, **batch_data, weights=updated_weights)
 
     total_loss, grads = jax.value_and_grad(total_loss_fn)(state.params)
     state = state.apply_gradients(grads=grads)
@@ -68,9 +68,9 @@ def train_step_lagrange(state, batch_data):
     Min-max step for Lagrange multipliers.
     """
     def total_loss_fn(params, lambda_d, lambda_r):
-        loss_e = energy_loss(params, state.apply_fn, batch_data['x_fluid'])
-        loss_d = dirichlet_loss(params, state.apply_fn, batch_data['x_anode'], batch_data['v_anode'])
-        loss_r = robin_loss(params, state.apply_fn, batch_data['x_cathode'], batch_data['normals'],
+        loss_e = energy_loss({'params': params}, state.apply_fn, batch_data['x_fluid'])
+        loss_d = dirichlet_loss({'params': params}, state.apply_fn, batch_data['x_anode'], batch_data['v_anode'])
+        loss_r = robin_loss({'params': params}, state.apply_fn, batch_data['x_cathode'], batch_data['normals'],
                             batch_data['v_cathode'], batch_data['r_film'], batch_data['sigma'])
         # Return total loss, and individual boundary losses for lambda gradients
         return loss_e + lambda_d * loss_d + lambda_r * loss_r, (loss_d, loss_r)
