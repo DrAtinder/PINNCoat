@@ -24,6 +24,11 @@ def main():
     print("Loading geometries...")
     # Geometry
     bath_mesh, bath_points, bath_normals = load_stl_surface(bath_path, 2000)
+
+    bounds = bath_mesh.bounds
+    center = tuple((bounds[0] + bounds[1]) / 2.0)
+    L_char = float(jnp.max(bounds[1] - bounds[0]) / 2.0)
+
     anode_mesh, anode_points, anode_normals = load_stl_surface(anode_path, 2000)
     cathode_mesh, cathode_points, cathode_normals = load_cathode_nas(cathode_path, 4000)
 
@@ -39,14 +44,14 @@ def main():
     print("Initializing network...")
     # Network Initialization
     key = jax.random.PRNGKey(42)
-    variables = init_network(key, input_shape=(1, 3))
+    variables = init_network(key, input_shape=(1, 3), L_char=L_char, V_scale=v_anode, center=center)
 
     # Extract params from initialized variables
     # init_network returns the full variables dict. The model uses variable collections,
     # typically "params"
     params = variables['params'] if 'params' in variables else variables
 
-    model = PotentialPINN()
+    model = PotentialPINN(L_char=L_char, V_scale=v_anode, center=center)
 
     # Optimizer Setup
     tx = optax.adam(learning_rate=1e-3)
@@ -71,7 +76,7 @@ def main():
         params=params,
         tx=tx,
         batch_data=batch_data,
-        epochs=1000,
+        epochs=5000,
         mode="fixed"
     )
 
