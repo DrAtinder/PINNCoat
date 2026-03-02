@@ -70,7 +70,7 @@ def load_cathode_nas(nas_path, num_points):
     return mesh, points, normals
 
 
-def generate_fluid_points(bath_mesh, obstacle_meshes, num_points):
+def generate_fluid_points(bath_mesh, obstacle_meshes, num_points, cathode_points=None, cathode_normals=None, boundary_layer_ratio=0.5):
     """
     Sample random 3D points inside the bath bounding box.
     Filter these points so they are STRICTLY inside the bath mesh
@@ -80,6 +80,9 @@ def generate_fluid_points(bath_mesh, obstacle_meshes, num_points):
         bath_mesh (trimesh.Trimesh): The bounding bath mesh.
         obstacle_meshes (list[trimesh.Trimesh]): List of obstacle meshes inside the bath.
         num_points (int): Target number of fluid points to generate.
+        cathode_points (np.ndarray, optional): Points on the cathode surface for boundary layer sampling.
+        cathode_normals (np.ndarray, optional): Normals corresponding to the cathode points for outward extrusion.
+        boundary_layer_ratio (float, optional): Ratio of points to sample in the boundary layer. Default is 0.5.
 
     Returns:
         np.ndarray: Array of shape (num_points, 3) representing valid fluid points.
@@ -87,32 +90,63 @@ def generate_fluid_points(bath_mesh, obstacle_meshes, num_points):
     bounds = bath_mesh.bounds
     min_bound, max_bound = bounds[0], bounds[1]
 
-    valid_points = []
+    if cathode_points is not None:
+        num_boundary_points = int(num_points * boundary_layer_ratio)
+        num_uniform_points = num_points - num_boundary_points
+    else:
+        num_boundary_points = 0
+        num_uniform_points = num_points
 
-    # To optimize sampling, we'll try fetching batches of points
-    batch_size = num_points * 2
+    # Helper function to filter points
+    def filter_points(points):
+        inside_bath_mask = bath_mesh.ray.contains_points(points)
+        candidates = points[inside_bath_mask]
 
-    while len(valid_points) < num_points:
-        # Sample random points within the bounding box
-        random_points = np.random.uniform(min_bound, max_bound, size=(batch_size, 3))
-
-        # Check if points are inside the bath mesh
-        # ray.contains returns True if a point is inside the volume
-        inside_bath_mask = bath_mesh.ray.contains_points(random_points)
-
-        # Keep only points inside the bath
-        candidates = random_points[inside_bath_mask]
-
-        # Check against each obstacle
         if len(candidates) > 0:
             outside_obstacles_mask = np.ones(len(candidates), dtype=bool)
             for obs_mesh in obstacle_meshes:
-                # contains_points returns True if point is inside the obstacle
                 inside_obs = obs_mesh.ray.contains_points(candidates)
                 outside_obstacles_mask &= ~inside_obs
+            return candidates[outside_obstacles_mask]
+        return np.array([])
 
-            accepted = candidates[outside_obstacles_mask]
-            valid_points.extend(accepted)
+    valid_uniform_points = []
+    batch_size_uniform = max(num_uniform_points * 2, 1)
 
-    # Return exactly num_points
-    return np.array(valid_points[:num_points])
+    while len(valid_uniform_points) < num_uniform_points:
+        # Sample random points within the bounding box
+        random_points = np.random.uniform(min_bound, max_bound, size=(batch_size_uniform, 3))
+        accepted = filter_points(random_points)
+        valid_uniform_points.extend(accepted)
+
+    valid_uniform_points = np.array(valid_uniform_points[:num_uniform_points])
+
+    valid_boundary_points = []
+    if num_boundary_points > 0 and cathode_points is not None and cathode_normals is not None and len(cathode_points) > 0:
+        batch_size_boundary = max(num_boundary_points * 2, 1)
+        while len(valid_boundary_points) < num_boundary_points:
+            # Sample from cathode points and extrude outward along the normal
+            indices = np.random.choice(len(cathode_points), size=batch_size_boundary)
+            sampled_cathode = cathode_points[indices]
+            sampled_normals = cathode_normals[indices]
+
+            push_distance = np.abs(np.random.normal(scale=10.0, size=(batch_size_boundary, 1)))
+            extruded_points = sampled_cathode + (sampled_normals * push_distance)
+
+            accepted = filter_points(extruded_points)
+            valid_boundary_points.extend(accepted)
+
+        valid_boundary_points = np.array(valid_boundary_points[:num_boundary_points])
+
+    if len(valid_boundary_points) > 0:
+        if len(valid_uniform_points) > 0:
+            final_points = np.concatenate((valid_uniform_points, valid_boundary_points), axis=0)
+        else:
+            final_points = valid_boundary_points
+    else:
+        final_points = valid_uniform_points
+
+    # Shuffle the concatenated array
+    np.random.shuffle(final_points)
+
+    return final_points

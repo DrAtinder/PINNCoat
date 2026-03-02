@@ -21,7 +21,7 @@ def main():
     # Generate 3000 fluid points
     print("Generating fluid points...")
     obstacle_meshes = [anode_mesh, cathode_mesh]
-    fluid_points = generate_fluid_points(bath_mesh, obstacle_meshes, 3000)
+    fluid_points = generate_fluid_points(bath_mesh, obstacle_meshes, 3000, cathode_points=cathode_points, cathode_normals=cathode_normals)
 
     # Create Plotly traces
     print("Creating visualization...")
