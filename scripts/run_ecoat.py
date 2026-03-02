@@ -2,7 +2,9 @@ import os
 import jax
 import jax.numpy as jnp
 import optax
-
+import sys
+# Add the repository root directory to sys.path so we can import from src
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.pinncoat.geometry_utils import load_stl_surface, load_cathode_nas, generate_fluid_points
 from src.pinncoat.network import PotentialPINN, init_network
 from src.pinncoat.train import train_model
