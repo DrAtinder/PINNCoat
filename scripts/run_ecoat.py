@@ -3,11 +3,61 @@ import jax
 import jax.numpy as jnp
 import optax
 import sys
+import plotly.graph_objects as go
 # Add the repository root directory to sys.path so we can import from src
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.pinncoat.geometry_utils import load_stl_surface, load_cathode_nas, generate_fluid_points
 from src.pinncoat.network import PotentialPINN, init_network
 from src.pinncoat.train import train_model
+
+def plot_results(model, params, fluid_points, cathode_points, L_char, center, V_scale):
+    print("Predicting potentials for visualization...")
+    phi_fluid = model.apply({'params': params}, fluid_points)
+    phi_cathode = model.apply({'params': params}, cathode_points)
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter3d(
+        x=fluid_points[:, 0],
+        y=fluid_points[:, 1],
+        z=fluid_points[:, 2],
+        mode='markers',
+        marker=dict(
+            size=2,
+            color=phi_fluid.flatten(),
+            colorscale='Viridis',
+            opacity=0.3,
+            showscale=True,
+            colorbar=dict(title="Fluid Pot", x=0.8)
+        ),
+        name="Fluid Potential"
+    ))
+
+    fig.add_trace(go.Scatter3d(
+        x=cathode_points[:, 0],
+        y=cathode_points[:, 1],
+        z=cathode_points[:, 2],
+        mode='markers',
+        marker=dict(
+            size=4,
+            color=phi_cathode.flatten(),
+            colorscale='Inferno',
+            showscale=True,
+            colorbar=dict(title="Cathode Pot", x=0.9)
+        ),
+        name="Cathode Surface Potential"
+    ))
+
+    fig.update_layout(
+        title="PINN predicted potential",
+        scene=dict(
+            xaxis_title='X',
+            yaxis_title='Y',
+            zaxis_title='Z'
+        )
+    )
+
+    fig.show()
 
 def main():
     # Paths
@@ -81,6 +131,8 @@ def main():
     )
 
     print("Training completed.")
+
+    plot_results(model, state.params, fluid_points, cathode_points, L_char, center, v_anode)
 
 if __name__ == "__main__":
     main()
