@@ -4,11 +4,41 @@ import jax.numpy as jnp
 import optax
 import sys
 import plotly.graph_objects as go
+import pyvista as pv
+import numpy as np
 # Add the repository root directory to sys.path so we can import from src
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.pinncoat.geometry_utils import load_stl_surface, load_cathode_nas, generate_fluid_points
 from src.pinncoat.network import PotentialPINN, init_network
 from src.pinncoat.train import train_model
+
+def export_for_paraview(model, params, fluid_points, cathode_points, out_dir="data/output"):
+    os.makedirs(out_dir, exist_ok=True)
+
+    # Predict potentials
+    phi_fluid = model.apply({'params': params}, fluid_points)
+    phi_cathode = model.apply({'params': params}, cathode_points)
+
+    # Convert points to standard NumPy arrays
+    f_points_np = np.asarray(fluid_points)
+    c_points_np = np.asarray(cathode_points)
+
+    # Convert potentials to 1D standard NumPy arrays
+    f_phi_np = np.asarray(phi_fluid).flatten()
+    c_phi_np = np.asarray(phi_cathode).flatten()
+
+    # Create PyVista point clouds
+    fluid_vtk = pv.PolyData(f_points_np)
+    cathode_vtk = pv.PolyData(c_points_np)
+
+    # Assign the potential data to the VTK objects
+    fluid_vtk["Electric_Potential_V"] = f_phi_np
+    cathode_vtk["Electric_Potential_V"] = c_phi_np
+
+    # Save the files
+    fluid_vtk.save(os.path.join(out_dir, "fluid_results.vtp"))
+    cathode_vtk.save(os.path.join(out_dir, "cathode_results.vtp"))
+
 
 def plot_results(model, params, fluid_points, cathode_points, L_char, center, V_scale):
     print("Predicting potentials for visualization...")
@@ -131,6 +161,8 @@ def main():
     )
 
     print("Training completed.")
+
+    export_for_paraview(model, state.params, fluid_points, cathode_points)
 
     plot_results(model, state.params, fluid_points, cathode_points, L_char, center, v_anode)
 
