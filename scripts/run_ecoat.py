@@ -12,7 +12,7 @@ from src.pinncoat.geometry_utils import load_stl_surface, load_cathode_nas, gene
 from src.pinncoat.network import PotentialPINN, init_network
 from src.pinncoat.train import train_model
 
-def export_for_paraview(model, params, fluid_points, cathode_points, out_dir="data/output"):
+def export_for_paraview(model, params, fluid_points, cathode_points, shield_points=None, out_dir="data/output"):
     os.makedirs(out_dir, exist_ok=True)
 
     # Predict potentials
@@ -39,8 +39,17 @@ def export_for_paraview(model, params, fluid_points, cathode_points, out_dir="da
     fluid_vtk.save(os.path.join(out_dir, "fluid_results.vtp"))
     cathode_vtk.save(os.path.join(out_dir, "cathode_results.vtp"))
 
+    if shield_points is not None:
+        s_points_np = np.asarray(shield_points)
+        shield_vtk = pv.PolyData(s_points_np)
+        # If the model is provided, predict and save the potential, otherwise just save the geometry
+        if model is not None and params is not None:
+            phi_shield = model.apply({'params': params}, shield_points)
+            shield_vtk["Electric_Potential_V"] = np.asarray(phi_shield).flatten()
+        shield_vtk.save(os.path.join(out_dir, "shield_results.vtp"))
 
-def plot_results(model, params, fluid_points, cathode_points, L_char, center, V_scale):
+
+def plot_results(model, params, fluid_points, cathode_points, shield_points, L_char, center, V_scale):
     print("Predicting potentials for visualization...")
     phi_fluid = model.apply({'params': params}, fluid_points)
     phi_cathode = model.apply({'params': params}, cathode_points)
@@ -77,6 +86,16 @@ def plot_results(model, params, fluid_points, cathode_points, L_char, center, V_
         ),
         name="Cathode Surface Potential"
     ))
+
+    if shield_points is not None:
+        fig.add_trace(go.Scatter3d(
+            x=shield_points[:, 0],
+            y=shield_points[:, 1],
+            z=shield_points[:, 2],
+            mode='markers',
+            marker=dict(size=2, color='red', opacity=0.8),
+            name="Virtual Shield (0V Constraint)"
+        ))
 
     fig.update_layout(
         title="PINN predicted potential",
@@ -168,9 +187,9 @@ def main():
 
     print("Training completed.")
 
-    export_for_paraview(model, state.params, fluid_points, cathode_points)
+    export_for_paraview(model, state.params, fluid_points, cathode_points, shield_points=shield_points)
 
-    plot_results(model, state.params, fluid_points, cathode_points, L_char, center, v_anode)
+    plot_results(model, state.params, fluid_points, cathode_points, shield_points, L_char, center, v_anode)
 
 if __name__ == "__main__":
     main()

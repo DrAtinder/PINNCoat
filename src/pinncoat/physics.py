@@ -68,8 +68,10 @@ def compute_total_loss(params, model, x_fluid, x_anode, x_cathode, normals, v_an
     loss_r = robin_loss(params, model, x_cathode, normals, v_cathode, r_film, sigma)
 
     loss_s = 0.0
+    weight_s = 0.0
     if x_shield is not None and len(weights) > 3:
         loss_s = shield_loss(params, model, x_shield, v_cathode)
+        weight_s = weights[3]
 
-    total_loss = weights[0] * loss_e + weights[1] * loss_d + weights[2] * loss_r + weights[3] * loss_s
+    total_loss = weights[0] * loss_e + weights[1] * loss_d + weights[2] * loss_r + weight_s * loss_s
     return total_loss, (loss_e, loss_d, loss_r, loss_s)
