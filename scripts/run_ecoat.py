@@ -124,14 +124,14 @@ def main():
     print("Initializing network...")
     # Network Initialization
     key = jax.random.PRNGKey(42)
-    variables = init_network(key, input_shape=(1, 3), L_char=L_char, V_scale=v_anode, center=center)
+    variables = init_network(key, input_shape=(1, 3), L_char=L_char, V_scale=v_anode, center=center, L_fourier=4)
 
     # Extract params from initialized variables
     # init_network returns the full variables dict. The model uses variable collections,
     # typically "params"
     params = variables['params'] if 'params' in variables else variables
 
-    model = PotentialPINN(L_char=L_char, V_scale=v_anode, center=center)
+    model = PotentialPINN(L_char=L_char, V_scale=v_anode, center=center, L_fourier=4)
 
     # Optimizer Setup
     tx = optax.adam(learning_rate=1e-3)

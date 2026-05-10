@@ -9,6 +9,7 @@ class PotentialPINN(nn.Module):
     L_char: float = 1.0
     V_scale: float = 1.0
     center: tuple = (0.0, 0.0, 0.0)
+    L_fourier: int = 4
 
     @nn.compact
     def __call__(self, x):
@@ -24,16 +25,33 @@ class PotentialPINN(nn.Module):
         c = jnp.array(self.center, dtype=x.dtype)
         x = (x - c) / self.L_char
 
-        for feat in self.features:
-            x = nn.Dense(feat)(x)
-            x = nn.tanh(x)
+        features_list = [x]
+        for i in range(self.L_fourier):
+            freq = (2.0 ** i) * jnp.pi
+            features_list.append(jnp.sin(freq * x))
+            features_list.append(jnp.cos(freq * x))
+
+        F = jnp.concatenate(features_list, axis=-1)
+
+        U = nn.Dense(self.features[0])(F)
+        U = nn.tanh(U)
+        V = nn.Dense(self.features[0])(F)
+        V = nn.tanh(V)
+
+        H = nn.Dense(self.features[0])(F)
+        H = nn.tanh(H)
+
+        for feat in self.features[1:]:
+            H = nn.Dense(feat)(H)
+            H = nn.tanh(H)
+            H = H * U + V
 
         # Final output layer without activation function
-        x = nn.Dense(1)(x)
-        x = x * self.V_scale
-        return x
+        out = nn.Dense(1)(H)
+        out = out * self.V_scale
+        return out
 
-def init_network(rng_key, input_shape=(1, 3), L_char=1.0, V_scale=1.0, center=(0.0, 0.0, 0.0)):
+def init_network(rng_key, input_shape=(1, 3), L_char=1.0, V_scale=1.0, center=(0.0, 0.0, 0.0), L_fourier=4):
     """
     Initializes the PotentialPINN network.
 
@@ -43,11 +61,12 @@ def init_network(rng_key, input_shape=(1, 3), L_char=1.0, V_scale=1.0, center=(0
         L_char (float): Characteristic length for spatial scaling.
         V_scale (float): Voltage scaling factor.
         center (tuple): Center of the spatial domain.
+        L_fourier (int): Number of frequency bands for Fourier Features.
 
     Returns:
         dict: Initialized network variables (weights).
     """
-    model = PotentialPINN(L_char=L_char, V_scale=V_scale, center=center)
+    model = PotentialPINN(L_char=L_char, V_scale=V_scale, center=center, L_fourier=L_fourier)
     dummy_input = jnp.zeros(input_shape)
     variables = model.init(rng_key, dummy_input)
     return variables
