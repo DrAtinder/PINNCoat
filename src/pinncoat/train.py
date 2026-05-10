@@ -14,9 +14,10 @@ def train_step_fixed(state, batch_data, weights):
     def loss_fn(params):
         return compute_total_loss({'params': params}, state.apply_fn, **batch_data, weights=weights)
 
-    loss, grads = jax.value_and_grad(loss_fn)(state.params)
+    grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
+    (loss, (loss_e, loss_d, loss_r, loss_s)), grads = grad_fn(state.params)
     state = state.apply_gradients(grads=grads)
-    return state, loss
+    return state, loss, loss_e, loss_d, loss_r, loss_s
 
 
 @jax.jit
@@ -47,10 +48,11 @@ def train_step_adaptive(state, batch_data, dynamic_weights):
     def total_loss_fn(params):
         return compute_total_loss({'params': params}, state.apply_fn, **batch_data, weights=updated_weights)
 
-    total_loss, grads = jax.value_and_grad(total_loss_fn)(state.params)
+    grad_fn = jax.value_and_grad(total_loss_fn, has_aux=True)
+    (total_loss, (loss_e, loss_d, loss_r, loss_s)), grads = grad_fn(state.params)
     state = state.apply_gradients(grads=grads)
 
-    return state, total_loss, updated_weights
+    return state, total_loss, updated_weights, loss_e, loss_d, loss_r, loss_s
 
 
 class TrainStateLagrange(train_state.TrainState):
@@ -171,18 +173,25 @@ def train_model(model, params, tx, batch_data, epochs=100, mode="fixed", weights
 
     for epoch in range(epochs):
         if mode == "fixed":
-            state, loss = train_step_fixed(state, batch_data, fixed_weights)
+            state, loss, loss_e, loss_d, loss_r, loss_s = train_step_fixed(state, batch_data, fixed_weights)
         elif mode == "adaptive":
-            state, loss, dynamic_weights = train_step_adaptive(state, batch_data, dynamic_weights)
+            state, loss, dynamic_weights, loss_e, loss_d, loss_r, loss_s = train_step_adaptive(state, batch_data, dynamic_weights)
         elif mode == "lagrange":
+            # For brevity, lagrange does not return the individual components here unless modified as well.
+            # Assuming 'fixed' or 'adaptive' is mainly used based on the PR comment.
             state, loss = train_step_lagrange(state, batch_data)
+            loss_e = loss_d = loss_r = loss_s = 0.0 # Placeholder
         else:
             raise ValueError(f"Unknown training mode: {mode}")
 
         losses.append(loss)
 
         if epoch % max(1, epochs // 10) == 0:
-            print(f"Epoch {epoch}/{epochs}, Loss: {loss:.6f}")
+            if mode in ["fixed", "adaptive"]:
+                print(f"Epoch {epoch}/{epochs}, Total: {loss:.2f} | Energy: {loss_e:.2f} | Anode: {loss_d:.2f} | Cathode: {loss_r:.2f} | Shield: {loss_s:.2f}")
+            else:
+                print(f"Epoch {epoch}/{epochs}, Loss: {loss:.6f}")
+
             if mode == "adaptive":
                 if len(dynamic_weights) > 3:
                     print(f"  Weights: E={dynamic_weights[0]:.2f}, D={dynamic_weights[1]:.2f}, R={dynamic_weights[2]:.2f}, S={dynamic_weights[3]:.2f}")

@@ -43,11 +43,12 @@ class TestPhysicsLosses(unittest.TestCase):
         self.assertTrue(jnp.isfinite(loss))
 
     def test_compute_total_loss_shape(self):
-        loss = compute_total_loss(self.params, self.model, self.x_fluid, self.x_anode,
+        loss, aux = compute_total_loss(self.params, self.model, self.x_fluid, self.x_anode,
                                   self.x_cathode, self.normals, self.v_anode, self.v_cathode,
                                   self.r_film, self.sigma)
         self.assertEqual(loss.shape, ())
         self.assertTrue(jnp.isfinite(loss))
+        self.assertEqual(len(aux), 4)
 
 if __name__ == '__main__':
     unittest.main()

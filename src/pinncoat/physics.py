@@ -71,4 +71,5 @@ def compute_total_loss(params, model, x_fluid, x_anode, x_cathode, normals, v_an
     if x_shield is not None and len(weights) > 3:
         loss_s = shield_loss(params, model, x_shield, v_cathode)
 
-    return weights[0] * loss_e + weights[1] * loss_d + weights[2] * loss_r + weights[3] * loss_s
+    total_loss = weights[0] * loss_e + weights[1] * loss_d + weights[2] * loss_r + weights[3] * loss_s
+    return total_loss, (loss_e, loss_d, loss_r, loss_s)
