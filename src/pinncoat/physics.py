@@ -51,12 +51,24 @@ def robin_loss(params, model, x_cathode, normals, v_cathode, r_film, sigma):
 
     return jnp.mean((J_pred - J_target)**2)
 
-def compute_total_loss(params, model, x_fluid, x_anode, x_cathode, normals, v_anode, v_cathode, r_film, sigma, weights=(1.0, 1.0, 1.0)):
+def shield_loss(params, model, x_shield, v_cathode):
     """
-    Computes the total loss as a weighted sum of energy, Dirichlet, and Robin losses.
+    Penalizes voltage inside the solid geometry to force the field to route through openings.
+    """
+    apply_fn = model.apply if hasattr(model, 'apply') else model
+    phi_shield = apply_fn(params, x_shield)[:, 0]
+    return jnp.mean((phi_shield - v_cathode)**2)
+
+def compute_total_loss(params, model, x_fluid, x_anode, x_cathode, normals, v_anode, v_cathode, r_film, sigma, x_shield=None, weights=(1.0, 1.0, 1.0, 100.0)):
+    """
+    Computes the total loss as a weighted sum of energy, Dirichlet, Robin, and shield losses.
     """
     loss_e = energy_loss(params, model, x_fluid)
     loss_d = dirichlet_loss(params, model, x_anode, v_anode)
     loss_r = robin_loss(params, model, x_cathode, normals, v_cathode, r_film, sigma)
 
-    return weights[0] * loss_e + weights[1] * loss_d + weights[2] * loss_r
+    loss_s = 0.0
+    if x_shield is not None and len(weights) > 3:
+        loss_s = shield_loss(params, model, x_shield, v_cathode)
+
+    return weights[0] * loss_e + weights[1] * loss_d + weights[2] * loss_r + weights[3] * loss_s

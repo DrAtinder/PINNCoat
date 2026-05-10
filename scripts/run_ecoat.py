@@ -121,6 +121,10 @@ def main():
         cathode_normals=cathode_normals
     )
 
+    print("Generating shield points...")
+    shield_offset = 5.0
+    shield_points = cathode_points - shield_offset * cathode_normals
+
     print("Initializing network...")
     # Network Initialization
     key = jax.random.PRNGKey(42)
@@ -147,6 +151,7 @@ def main():
         'v_cathode': jnp.array(v_cathode, dtype=jnp.float32),
         'r_film': jnp.array(r_film, dtype=jnp.float32),
         'sigma': jnp.array(sigma, dtype=jnp.float32),
+        'x_shield': jnp.array(shield_points, dtype=jnp.float32),
     }
 
     print("Starting training...")
@@ -157,7 +162,8 @@ def main():
         tx=tx,
         batch_data=batch_data,
         epochs=5000,
-        mode="fixed"
+        mode="fixed",
+        weights=(1.0, 1.0, 1.0, 100.0)
     )
 
     print("Training completed.")

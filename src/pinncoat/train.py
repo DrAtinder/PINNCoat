@@ -122,7 +122,7 @@ def train_step_lagrange(state, batch_data):
     return new_state, loss
 
 
-def train_model(model, params, tx, batch_data, epochs=100, mode="fixed", weights=(1.0, 1.0, 1.0), tx_lambdas=None):
+def train_model(model, params, tx, batch_data, epochs=100, mode="fixed", weights=(1.0, 1.0, 1.0, 100.0), tx_lambdas=None):
     """
     Main training wrapper for PINNCoat.
 
@@ -184,7 +184,10 @@ def train_model(model, params, tx, batch_data, epochs=100, mode="fixed", weights
         if epoch % max(1, epochs // 10) == 0:
             print(f"Epoch {epoch}/{epochs}, Loss: {loss:.6f}")
             if mode == "adaptive":
-                print(f"  Weights: {dynamic_weights}")
+                if len(dynamic_weights) > 3:
+                    print(f"  Weights: E={dynamic_weights[0]:.2f}, D={dynamic_weights[1]:.2f}, R={dynamic_weights[2]:.2f}, S={dynamic_weights[3]:.2f}")
+                else:
+                    print(f"  Weights: {dynamic_weights}")
             elif mode == "lagrange":
                 print(f"  Lambda D: {state.lambda_d:.4f}, Lambda R: {state.lambda_r:.4f}")
 
