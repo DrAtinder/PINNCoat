@@ -157,7 +157,12 @@ def main():
     model = PotentialPINN(L_char=L_char, V_scale=v_anode, center=center, L_fourier=4)
 
     # Optimizer Setup
-    tx = optax.adam(learning_rate=1e-3)
+    scheduler = optax.exponential_decay(
+    init_value=1e-3, 
+    transition_steps=5000, # Drop the rate every 5000 epochs
+    decay_rate=0.8         # Multiply the rate by 0.8 at each transition
+    )
+    tx = optax.adam(learning_rate=scheduler)
 
     print("Packaging data...")
     # Data Packaging
