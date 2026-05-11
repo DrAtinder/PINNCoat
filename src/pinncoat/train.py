@@ -3,16 +3,17 @@ import jax.numpy as jnp
 import optax
 from flax.training import train_state
 from flax import struct
-from src.pinncoat.physics import compute_total_loss, energy_loss, dirichlet_loss, robin_loss
+from functools import partial
+from src.pinncoat.physics import compute_total_loss, energy_loss, dirichlet_loss, robin_loss, laplace_loss
 
 
-@jax.jit
-def train_step_fixed(state, batch_data, weights):
+@partial(jax.jit, static_argnames=['fluid_method'])
+def train_step_fixed(state, batch_data, weights, fluid_method="energy"):
     """
     Standard training step with fixed penalty weights.
     """
     def loss_fn(params):
-        return compute_total_loss({'params': params}, state.apply_fn, **batch_data, weights=weights)
+        return compute_total_loss({'params': params}, state.apply_fn, **batch_data, weights=weights, fluid_method=fluid_method)
 
     grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
     (loss, (loss_e, loss_d, loss_r, loss_s)), grads = grad_fn(state.params)
@@ -20,13 +21,16 @@ def train_step_fixed(state, batch_data, weights):
     return state, loss, loss_e, loss_d, loss_r, loss_s
 
 
-@jax.jit
-def train_step_adaptive(state, batch_data, dynamic_weights):
+@partial(jax.jit, static_argnames=['fluid_method'])
+def train_step_adaptive(state, batch_data, dynamic_weights, fluid_method="energy"):
     """
     Training step with adaptive loss balancing.
     """
     def losses_fn(params):
-        loss_e = energy_loss({'params': params}, state.apply_fn, batch_data['x_fluid'])
+        if fluid_method == "laplace":
+            loss_e = laplace_loss({'params': params}, state.apply_fn, batch_data['x_fluid'])
+        else:
+            loss_e = energy_loss({'params': params}, state.apply_fn, batch_data['x_fluid'])
         loss_d = dirichlet_loss({'params': params}, state.apply_fn, batch_data['x_anode'], batch_data['v_anode'])
         loss_r = robin_loss({'params': params}, state.apply_fn, batch_data['x_cathode'], batch_data['normals'],
                             batch_data['v_cathode'], batch_data['r_film'], batch_data['sigma'])
@@ -46,7 +50,7 @@ def train_step_adaptive(state, batch_data, dynamic_weights):
     updated_weights = alpha * dynamic_weights + (1 - alpha) * new_weights
 
     def total_loss_fn(params):
-        return compute_total_loss({'params': params}, state.apply_fn, **batch_data, weights=updated_weights)
+        return compute_total_loss({'params': params}, state.apply_fn, **batch_data, weights=updated_weights, fluid_method=fluid_method)
 
     grad_fn = jax.value_and_grad(total_loss_fn, has_aux=True)
     (total_loss, (loss_e, loss_d, loss_r, loss_s)), grads = grad_fn(state.params)
@@ -64,8 +68,8 @@ class TrainStateLagrange(train_state.TrainState):
     opt_state_lambdas: optax.OptState
     tx_lambdas: optax.GradientTransformation = struct.field(pytree_node=False)
 
-@jax.jit
-def train_step_lagrange(state, batch_data):
+@partial(jax.jit, static_argnames=['fluid_method'])
+def train_step_lagrange(state, batch_data, fluid_method="energy"):
     """
     Min-max step for Lagrange multipliers.
     """
@@ -76,7 +80,7 @@ def train_step_lagrange(state, batch_data):
         # We also need to support shield loss if it's there.
         # Let's set weights to use the lagrange multipliers, and 1.0 for energy, and 100.0 for shield if present.
         weights = (1.0, lambda_d, lambda_r, 100.0) # Assuming shield weight is fixed at 100.0 if used
-        total_loss, (loss_e, loss_d, loss_r, loss_s) = compute_total_loss({'params': params}, state.apply_fn, **batch_data, weights=weights)
+        total_loss, (loss_e, loss_d, loss_r, loss_s) = compute_total_loss({'params': params}, state.apply_fn, **batch_data, weights=weights, fluid_method=fluid_method)
         return total_loss, (loss_e, loss_d, loss_r, loss_s)
 
     # 1. Gradient Descent step: minimize total loss w.r.t network params
@@ -125,7 +129,7 @@ def train_step_lagrange(state, batch_data):
     return new_state, loss, loss_e, loss_d, loss_r, loss_s
 
 
-def train_model(model, params, tx, batch_data, epochs=100, mode="fixed", weights=(1.0, 1.0, 1.0, 100.0), tx_lambdas=None):
+def train_model(model, params, tx, batch_data, epochs=100, mode="fixed", weights=(1.0, 1.0, 1.0, 100.0), tx_lambdas=None, fluid_method="energy"):
     """
     Main training wrapper for PINNCoat.
 
@@ -138,6 +142,7 @@ def train_model(model, params, tx, batch_data, epochs=100, mode="fixed", weights
         mode: Training mode ('fixed', 'adaptive', 'lagrange').
         weights: Initial weights for losses (used in 'fixed' and 'adaptive' modes).
         tx_lambdas: Optax optimizer for Lagrange multipliers (required for 'lagrange' mode).
+        fluid_method: string method for fluid loss calculation ('energy' or 'laplace').
 
     Returns:
         Trained state and list of losses.
@@ -174,11 +179,11 @@ def train_model(model, params, tx, batch_data, epochs=100, mode="fixed", weights
 
     for epoch in range(epochs):
         if mode == "fixed":
-            state, loss, loss_e, loss_d, loss_r, loss_s = train_step_fixed(state, batch_data, fixed_weights)
+            state, loss, loss_e, loss_d, loss_r, loss_s = train_step_fixed(state, batch_data, fixed_weights, fluid_method=fluid_method)
         elif mode == "adaptive":
-            state, loss, dynamic_weights, loss_e, loss_d, loss_r, loss_s = train_step_adaptive(state, batch_data, dynamic_weights)
+            state, loss, dynamic_weights, loss_e, loss_d, loss_r, loss_s = train_step_adaptive(state, batch_data, dynamic_weights, fluid_method=fluid_method)
         elif mode == "lagrange":
-            state, loss, loss_e, loss_d, loss_r, loss_s = train_step_lagrange(state, batch_data)
+            state, loss, loss_e, loss_d, loss_r, loss_s = train_step_lagrange(state, batch_data, fluid_method=fluid_method)
         else:
             raise ValueError(f"Unknown training mode: {mode}")
 

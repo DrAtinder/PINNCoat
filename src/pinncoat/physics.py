@@ -14,6 +14,19 @@ def get_phi_and_grad(params, model, x):
     # Calculate both value and gradient, then vmap over the batch dimension
     return jax.vmap(jax.value_and_grad(phi_scalar, argnums=1), in_axes=(None, 0))(params, x)
 
+def laplace_loss(params, model, x_fluid):
+    """Computes the Strong Form PDE residual: mean((nabla^2 phi)^2)"""
+    def get_laplacian(x):
+        def phi_single(xi):
+            apply_fn = model.apply if hasattr(model, 'apply') else model
+            return jnp.squeeze(apply_fn(params, xi.reshape(1, -1)))
+        # jax.hessian computes the exact 3x3 matrix of second derivatives
+        H = jax.hessian(phi_single)(x)
+        return jnp.trace(H) # Trace is d2/dx2 + d2/dy2 + d2/dz2
+
+    laplacians = jax.vmap(get_laplacian)(x_fluid)
+    return jnp.mean(laplacians**2)
+
 def energy_loss(params, model, x_fluid):
     """
     Computes the Deep Ritz energy functional over fluid points.
@@ -59,11 +72,14 @@ def shield_loss(params, model, x_shield, v_cathode):
     phi_shield = apply_fn(params, x_shield)[:, 0]
     return jnp.mean((phi_shield - v_cathode)**2)
 
-def compute_total_loss(params, model, x_fluid, x_anode, x_cathode, normals, v_anode, v_cathode, r_film, sigma, x_shield=None, weights=(1.0, 1.0, 1.0, 100.0)):
+def compute_total_loss(params, model, x_fluid, x_anode, x_cathode, normals, v_anode, v_cathode, r_film, sigma, x_shield=None, weights=(1.0, 1.0, 1.0, 100.0), fluid_method="energy"):
     """
     Computes the total loss as a weighted sum of energy, Dirichlet, Robin, and shield losses.
     """
-    loss_e = energy_loss(params, model, x_fluid)
+    if fluid_method == "laplace":
+        loss_e = laplace_loss(params, model, x_fluid)
+    else:
+        loss_e = energy_loss(params, model, x_fluid)
     loss_d = dirichlet_loss(params, model, x_anode, v_anode)
     loss_r = robin_loss(params, model, x_cathode, normals, v_cathode, r_film, sigma)
 

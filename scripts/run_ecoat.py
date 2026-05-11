@@ -185,9 +185,10 @@ def main():
         params=params,
         tx=tx,
         batch_data=batch_data,
-        epochs=25000,
+        epochs=50000,
         mode="fixed",
-        weights=(1.0, 100.0, 10.0, 100.0)
+        weights=(1.0, 100.0, 10.0, 100.0),
+        fluid_method="laplace"  # Toggle this to 'energy' to revert to Deep Ritz
     )
 
     print("Training completed.")
