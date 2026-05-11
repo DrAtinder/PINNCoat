@@ -115,10 +115,10 @@ def main():
     cathode_path = "data/raw/cathode.nas"
 
     # Physical Constants
-    v_anode = 250.0
+    v_anode = 100.0
     v_cathode = 0.0
-    sigma = 1.5
-    r_film = 1.0
+    sigma = 0.2
+    r_film = 0.5
 
     print("Loading geometries...")
     # Geometry
@@ -128,20 +128,20 @@ def main():
     center = tuple((bounds[0] + bounds[1]) / 2.0)
     L_char = float(jnp.max(bounds[1] - bounds[0]) / 2.0)
 
-    anode_mesh, anode_points, anode_normals = load_stl_surface(anode_path, 2000)
-    cathode_mesh, cathode_points, cathode_normals = load_cathode_nas(cathode_path, 4000)
+    anode_mesh, anode_points, anode_normals = load_stl_surface(anode_path, 5000)
+    cathode_mesh, cathode_points, cathode_normals = load_cathode_nas(cathode_path, 30000)
 
     print("Generating fluid points...")
     fluid_points = generate_fluid_points(
         bath_mesh,
         obstacle_meshes=[anode_mesh, cathode_mesh],
-        num_points=10000,
+        num_points=100000,
         cathode_points=cathode_points,
         cathode_normals=cathode_normals
     )
 
     print("Generating shield points...")
-    shield_offset = 5.0
+    shield_offset = 0.0005
     shield_points = cathode_points - shield_offset * cathode_normals
 
     print("Initializing network...")
@@ -157,7 +157,14 @@ def main():
     model = PotentialPINN(L_char=L_char, V_scale=v_anode, center=center, L_fourier=4)
 
     # Optimizer Setup
-    tx = optax.adam(learning_rate=1e-3)
+    #tx = optax.adam(learning_rate=1e-3)
+    scheduler = optax.exponential_decay(
+    init_value=1e-3, 
+    transition_steps=5000, # Drop the rate every 5000 epochs
+    decay_rate=0.8         # Multiply the rate by 0.8 at each transition
+    )
+    tx = optax.adam(learning_rate=scheduler)
+
 
     print("Packaging data...")
     # Data Packaging
@@ -180,9 +187,9 @@ def main():
         params=params,
         tx=tx,
         batch_data=batch_data,
-        epochs=5000,
+        epochs=100000,
         mode="fixed",
-        weights=(1.0, 1.0, 1.0, 100.0)
+        weights=(1.0, 100.0, 10.0, 0.0)
     )
 
     print("Training completed.")
