@@ -1,6 +1,7 @@
 import trimesh
 import numpy as np
 import meshio
+from scipy.spatial import cKDTree
 
 def load_stl_surface(stl_path, num_points):
     """
@@ -99,16 +100,41 @@ def generate_fluid_points(bath_mesh, obstacle_meshes, num_points, cathode_points
 
     # Helper function to filter points
     def filter_points(points):
+        # 1. Keep points inside the main bath
         inside_bath_mask = bath_mesh.ray.contains_points(points)
         candidates = points[inside_bath_mask]
 
-        if len(candidates) > 0:
-            outside_obstacles_mask = np.ones(len(candidates), dtype=bool)
-            for obs_mesh in obstacle_meshes:
-                inside_obs = obs_mesh.ray.contains_points(candidates)
-                outside_obstacles_mask &= ~inside_obs
-            return candidates[outside_obstacles_mask]
-        return np.array([])
+        if len(candidates) == 0:
+            return np.array([])
+
+        # 2. KD-Tree Proximity Filter for 2D Shell Cathodes
+        # This allows fluid inside hollow cavities, but creates a mathematical
+        # "Keep-Out Zone" (e.g., 2mm) exactly around the sheet metal.
+        if cathode_points is not None and len(cathode_points) > 0:
+            # Build a fast spatial tree of the car body (do this once outside the loop if possible for speed, but fine here for now)
+            tree = cKDTree(cathode_points)
+
+            # Define physical keep-out distance (e.g., 0.002 meters = 2mm)
+            # MUST be strictly larger than your shield_offset!
+            keep_out_distance = 0.002
+
+            # Find distance to nearest metal point for all fluid candidates
+            distances, _ = tree.query(candidates)
+
+            # Keep only points that are safely away from the metal surface
+            safe_distance_mask = distances > keep_out_distance
+            candidates = candidates[safe_distance_mask]
+
+        if len(candidates) == 0:
+            return np.array([])
+
+        # 3. Filter remaining valid solid obstacles (Anodes)
+        outside_obstacles_mask = np.ones(len(candidates), dtype=bool)
+        for obs_mesh in obstacle_meshes:
+            inside_obs = obs_mesh.ray.contains_points(candidates)
+            outside_obstacles_mask &= ~inside_obs
+
+        return candidates[outside_obstacles_mask]
 
     valid_uniform_points = []
     batch_size_uniform = max(num_uniform_points * 2, 1)
