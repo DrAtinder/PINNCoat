@@ -16,9 +16,9 @@ def train_step_fixed(state, batch_data, weights, fluid_method="energy"):
         return compute_total_loss({'params': params}, state.apply_fn, **batch_data, weights=weights, fluid_method=fluid_method)
 
     grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
-    (loss, (loss_e, loss_d, loss_r, loss_s)), grads = grad_fn(state.params)
+    (loss, (loss_e, loss_d, loss_r, loss_s, loss_sens)), grads = grad_fn(state.params)
     state = state.apply_gradients(grads=grads)
-    return state, loss, loss_e, loss_d, loss_r, loss_s
+    return state, loss, loss_e, loss_d, loss_r, loss_s, loss_sens
 
 
 @partial(jax.jit, static_argnames=['fluid_method'])
@@ -39,11 +39,22 @@ def train_step_adaptive(state, batch_data, dynamic_weights, fluid_method="energy
     # Compute individual losses
     loss_e, loss_d, loss_r = losses_fn(state.params)
 
-    # Simple heuristic to balance weights: inverse running average of loss magnitudes (or just current magnitudes)
-    # Using 1 / (loss + 1e-8)
-    new_weights = 1.0 / (jnp.array([loss_e, loss_d, loss_r]) + 1e-8)
-    # Normalize weights so they sum to 3.0 (or similar) to keep overall learning rate scale
-    new_weights = 3.0 * new_weights / jnp.sum(new_weights)
+    # Calculate dynamic weights based on the number of provided dynamic weights
+    num_weights = dynamic_weights.shape[0]
+
+    # We balance the core 3 losses if we only have 3 or 4 weights (shield is usually fixed)
+    # If we have 5 weights (sensor added), we just use the first 3 for balancing here as a simple heuristic,
+    # and keep the others fixed, or we could balance them all. But the current losses_fn only returns 3.
+    # To avoid changing the logic too much, we will update the first 3 and leave the rest as is.
+    core_losses = jnp.array([loss_e, loss_d, loss_r])
+    new_core_weights = 1.0 / (core_losses + 1e-8)
+    new_core_weights = 3.0 * new_core_weights / jnp.sum(new_core_weights)
+
+    # Pad new_weights to match the shape of dynamic_weights
+    if num_weights > 3:
+        new_weights = jnp.concatenate([new_core_weights, dynamic_weights[3:]])
+    else:
+        new_weights = new_core_weights
 
     # Smooth update of dynamic_weights using EMA (Exponential Moving Average)
     alpha = 0.9
@@ -53,10 +64,10 @@ def train_step_adaptive(state, batch_data, dynamic_weights, fluid_method="energy
         return compute_total_loss({'params': params}, state.apply_fn, **batch_data, weights=updated_weights, fluid_method=fluid_method)
 
     grad_fn = jax.value_and_grad(total_loss_fn, has_aux=True)
-    (total_loss, (loss_e, loss_d, loss_r, loss_s)), grads = grad_fn(state.params)
+    (total_loss, (loss_e, loss_d, loss_r, loss_s, loss_sens)), grads = grad_fn(state.params)
     state = state.apply_gradients(grads=grads)
 
-    return state, total_loss, updated_weights, loss_e, loss_d, loss_r, loss_s
+    return state, total_loss, updated_weights, loss_e, loss_d, loss_r, loss_s, loss_sens
 
 
 class TrainStateLagrange(train_state.TrainState):
@@ -79,16 +90,16 @@ def train_step_lagrange(state, batch_data, fluid_method="energy"):
         # But lagrange uses lambda_d and lambda_r as weights for Dirichlet and Robin.
         # We also need to support shield loss if it's there.
         # Let's set weights to use the lagrange multipliers, and 1.0 for energy, and 100.0 for shield if present.
-        weights = (1.0, lambda_d, lambda_r, 100.0) # Assuming shield weight is fixed at 100.0 if used
-        total_loss, (loss_e, loss_d, loss_r, loss_s) = compute_total_loss({'params': params}, state.apply_fn, **batch_data, weights=weights, fluid_method=fluid_method)
-        return total_loss, (loss_e, loss_d, loss_r, loss_s)
+        weights = (1.0, lambda_d, lambda_r, 100.0, 500.0) # Assuming shield and sensor weights are fixed
+        total_loss, (loss_e, loss_d, loss_r, loss_s, loss_sens) = compute_total_loss({'params': params}, state.apply_fn, **batch_data, weights=weights, fluid_method=fluid_method)
+        return total_loss, (loss_e, loss_d, loss_r, loss_s, loss_sens)
 
     # 1. Gradient Descent step: minimize total loss w.r.t network params
     def loss_for_params(params):
         return total_loss_fn(params, state.lambda_d, state.lambda_r)
 
     grad_fn = jax.value_and_grad(loss_for_params, has_aux=True)
-    (loss, (loss_e, loss_d, loss_r, loss_s)), grads = grad_fn(state.params)
+    (loss, (loss_e, loss_d, loss_r, loss_s, loss_sens)), grads = grad_fn(state.params)
     updates, new_opt_state = state.tx.update(grads, state.opt_state, state.params)
     new_params = optax.apply_updates(state.params, updates)
 
@@ -126,7 +137,7 @@ def train_step_lagrange(state, batch_data, fluid_method="energy"):
         opt_state_lambdas=new_opt_state_lambdas
     )
 
-    return new_state, loss, loss_e, loss_d, loss_r, loss_s
+    return new_state, loss, loss_e, loss_d, loss_r, loss_s, loss_sens
 
 
 def train_model(model, params, tx, batch_data, epochs=100, mode="fixed", weights=(1.0, 1.0, 1.0, 100.0), tx_lambdas=None, fluid_method="energy"):
@@ -179,18 +190,18 @@ def train_model(model, params, tx, batch_data, epochs=100, mode="fixed", weights
 
     for epoch in range(epochs):
         if mode == "fixed":
-            state, loss, loss_e, loss_d, loss_r, loss_s = train_step_fixed(state, batch_data, fixed_weights, fluid_method=fluid_method)
+            state, loss, loss_e, loss_d, loss_r, loss_s, loss_sens = train_step_fixed(state, batch_data, fixed_weights, fluid_method=fluid_method)
         elif mode == "adaptive":
-            state, loss, dynamic_weights, loss_e, loss_d, loss_r, loss_s = train_step_adaptive(state, batch_data, dynamic_weights, fluid_method=fluid_method)
+            state, loss, dynamic_weights, loss_e, loss_d, loss_r, loss_s, loss_sens = train_step_adaptive(state, batch_data, dynamic_weights, fluid_method=fluid_method)
         elif mode == "lagrange":
-            state, loss, loss_e, loss_d, loss_r, loss_s = train_step_lagrange(state, batch_data, fluid_method=fluid_method)
+            state, loss, loss_e, loss_d, loss_r, loss_s, loss_sens = train_step_lagrange(state, batch_data, fluid_method=fluid_method)
         else:
             raise ValueError(f"Unknown training mode: {mode}")
 
         losses.append(loss)
 
         if epoch % max(1, epochs // 10) == 0:
-            print(f"Epoch {epoch}/{epochs}, Total: {loss:.2f} | Energy: {loss_e:.2f} | Anode: {loss_d:.2f} | Cathode: {loss_r:.2f} | Shield: {loss_s:.2f}")
+            print(f"Epoch {epoch}/{epochs}, Total: {loss:.2f} | Energy: {loss_e:.2f} | Anode: {loss_d:.2f} | Cathode: {loss_r:.2f} | Shield: {loss_s:.2f} | Sensor: {loss_sens:.2f}")
 
             if mode == "adaptive":
                 if len(dynamic_weights) > 3:

@@ -72,9 +72,17 @@ def shield_loss(params, model, x_shield, v_cathode):
     phi_shield = apply_fn(params, x_shield)[:, 0]
     return jnp.mean((phi_shield - v_cathode)**2)
 
-def compute_total_loss(params, model, x_fluid, x_anode, x_cathode, normals, v_anode, v_cathode, r_film, sigma, x_shield=None, weights=(1.0, 1.0, 1.0, 100.0), fluid_method="energy"):
+def sensor_loss(params, model, x_sensor, v_sensor_true):
     """
-    Computes the total loss as a weighted sum of energy, Dirichlet, Robin, and shield losses.
+    Supervised MSE loss for sensor data assimilation.
+    """
+    apply_fn = model.apply if hasattr(model, 'apply') else model
+    v_pred = apply_fn(params, x_sensor)[:, 0]
+    return jnp.mean((v_pred - v_sensor_true)**2)
+
+def compute_total_loss(params, model, x_fluid, x_anode, x_cathode, normals, v_anode, v_cathode, r_film, sigma, x_shield=None, x_sensor=None, v_sensor=None, weights=(1.0, 1.0, 1.0, 100.0), fluid_method="energy"):
+    """
+    Computes the total loss as a weighted sum of energy, Dirichlet, Robin, shield, and sensor losses.
     """
     if fluid_method == "laplace":
         loss_e = laplace_loss(params, model, x_fluid)
@@ -89,5 +97,11 @@ def compute_total_loss(params, model, x_fluid, x_anode, x_cathode, normals, v_an
         loss_s = shield_loss(params, model, x_shield, v_cathode)
         weight_s = weights[3]
 
-    total_loss = weights[0] * loss_e + weights[1] * loss_d + weights[2] * loss_r + weight_s * loss_s
-    return total_loss, (loss_e, loss_d, loss_r, loss_s)
+    loss_sens = 0.0
+    weight_sens = 0.0
+    if x_sensor is not None and v_sensor is not None and len(weights) > 4:
+        loss_sens = sensor_loss(params, model, x_sensor, v_sensor)
+        weight_sens = weights[4]
+
+    total_loss = weights[0] * loss_e + weights[1] * loss_d + weights[2] * loss_r + weight_s * loss_s + weight_sens * loss_sens
+    return total_loss, (loss_e, loss_d, loss_r, loss_s, loss_sens)

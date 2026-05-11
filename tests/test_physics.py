@@ -48,7 +48,7 @@ class TestPhysicsLosses(unittest.TestCase):
                                   self.r_film, self.sigma)
         self.assertEqual(loss.shape, ())
         self.assertTrue(jnp.isfinite(loss))
-        self.assertEqual(len(aux), 4)
+        self.assertEqual(len(aux), 5)
 
 if __name__ == '__main__':
     unittest.main()

@@ -165,6 +165,10 @@ def main():
     tx = optax.adam(learning_rate=scheduler)
 
     print("Packaging data...")
+    # Define the Sensor Anchor (80-90% Confidence)
+    x_sensor = np.array([[0.056, 0.033, 0.12]], dtype=np.float32)
+    v_sensor_true = np.array([54.0], dtype=np.float32)
+
     # Data Packaging
     batch_data = {
         'x_fluid': jnp.array(fluid_points, dtype=jnp.float32),
@@ -176,6 +180,8 @@ def main():
         'r_film': jnp.array(r_film, dtype=jnp.float32),
         'sigma': jnp.array(sigma, dtype=jnp.float32),
         'x_shield': jnp.array(shield_points, dtype=jnp.float32),
+        'x_sensor': jnp.array(x_sensor, dtype=jnp.float32),
+        'v_sensor': jnp.array(v_sensor_true, dtype=jnp.float32),
     }
 
     print("Starting training...")
@@ -187,7 +193,7 @@ def main():
         batch_data=batch_data,
         epochs=50000,
         mode="fixed",
-        weights=(1.0, 100.0, 10.0, 100.0),
+        weights=(1.0, 1000.0, 10.0, 1000.0, 500.0),
         fluid_method="laplace"  # Toggle this to 'energy' to revert to Deep Ritz
     )
 
