@@ -14,9 +14,10 @@ def train_step_fixed(state, batch_data, weights):
     def loss_fn(params):
         return compute_total_loss({'params': params}, state.apply_fn, **batch_data, weights=weights)
 
-    loss, grads = jax.value_and_grad(loss_fn)(state.params)
+    grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
+    (loss, (loss_e, loss_d, loss_r, loss_s)), grads = grad_fn(state.params)
     state = state.apply_gradients(grads=grads)
-    return state, loss
+    return state, loss, loss_e, loss_d, loss_r, loss_s
 
 
 @jax.jit
@@ -47,10 +48,11 @@ def train_step_adaptive(state, batch_data, dynamic_weights):
     def total_loss_fn(params):
         return compute_total_loss({'params': params}, state.apply_fn, **batch_data, weights=updated_weights)
 
-    total_loss, grads = jax.value_and_grad(total_loss_fn)(state.params)
+    grad_fn = jax.value_and_grad(total_loss_fn, has_aux=True)
+    (total_loss, (loss_e, loss_d, loss_r, loss_s)), grads = grad_fn(state.params)
     state = state.apply_gradients(grads=grads)
 
-    return state, total_loss, updated_weights
+    return state, total_loss, updated_weights, loss_e, loss_d, loss_r, loss_s
 
 
 class TrainStateLagrange(train_state.TrainState):
@@ -68,19 +70,21 @@ def train_step_lagrange(state, batch_data):
     Min-max step for Lagrange multipliers.
     """
     def total_loss_fn(params, lambda_d, lambda_r):
-        loss_e = energy_loss({'params': params}, state.apply_fn, batch_data['x_fluid'])
-        loss_d = dirichlet_loss({'params': params}, state.apply_fn, batch_data['x_anode'], batch_data['v_anode'])
-        loss_r = robin_loss({'params': params}, state.apply_fn, batch_data['x_cathode'], batch_data['normals'],
-                            batch_data['v_cathode'], batch_data['r_film'], batch_data['sigma'])
-        # Return total loss, and individual boundary losses for lambda gradients
-        return loss_e + lambda_d * loss_d + lambda_r * loss_r, (loss_d, loss_r)
+        # We manually construct the loss to handle lagrange tracking properly.
+        # It's better to just reuse compute_total_loss to maintain consistency.
+        # But lagrange uses lambda_d and lambda_r as weights for Dirichlet and Robin.
+        # We also need to support shield loss if it's there.
+        # Let's set weights to use the lagrange multipliers, and 1.0 for energy, and 100.0 for shield if present.
+        weights = (1.0, lambda_d, lambda_r, 100.0) # Assuming shield weight is fixed at 100.0 if used
+        total_loss, (loss_e, loss_d, loss_r, loss_s) = compute_total_loss({'params': params}, state.apply_fn, **batch_data, weights=weights)
+        return total_loss, (loss_e, loss_d, loss_r, loss_s)
 
     # 1. Gradient Descent step: minimize total loss w.r.t network params
     def loss_for_params(params):
-        loss, _ = total_loss_fn(params, state.lambda_d, state.lambda_r)
-        return loss
+        return total_loss_fn(params, state.lambda_d, state.lambda_r)
 
-    loss, grads = jax.value_and_grad(loss_for_params)(state.params)
+    grad_fn = jax.value_and_grad(loss_for_params, has_aux=True)
+    (loss, (loss_e, loss_d, loss_r, loss_s)), grads = grad_fn(state.params)
     updates, new_opt_state = state.tx.update(grads, state.opt_state, state.params)
     new_params = optax.apply_updates(state.params, updates)
 
@@ -88,7 +92,6 @@ def train_step_lagrange(state, batch_data):
     # The gradient of L w.r.t lambda_d is exactly loss_d, w.r.t lambda_r is loss_r.
     # To maximize, we need to take a step in the direction of the positive gradient.
     # We negate the gradient because Optax assumes minimization.
-    _, (loss_d, loss_r) = total_loss_fn(state.params, state.lambda_d, state.lambda_r)
 
     grad_lambdas = {
         'lambda_d': -loss_d,
@@ -119,10 +122,10 @@ def train_step_lagrange(state, batch_data):
         opt_state_lambdas=new_opt_state_lambdas
     )
 
-    return new_state, loss
+    return new_state, loss, loss_e, loss_d, loss_r, loss_s
 
 
-def train_model(model, params, tx, batch_data, epochs=100, mode="fixed", weights=(1.0, 1.0, 1.0), tx_lambdas=None):
+def train_model(model, params, tx, batch_data, epochs=100, mode="fixed", weights=(1.0, 1.0, 1.0, 100.0), tx_lambdas=None):
     """
     Main training wrapper for PINNCoat.
 
@@ -171,20 +174,24 @@ def train_model(model, params, tx, batch_data, epochs=100, mode="fixed", weights
 
     for epoch in range(epochs):
         if mode == "fixed":
-            state, loss = train_step_fixed(state, batch_data, fixed_weights)
+            state, loss, loss_e, loss_d, loss_r, loss_s = train_step_fixed(state, batch_data, fixed_weights)
         elif mode == "adaptive":
-            state, loss, dynamic_weights = train_step_adaptive(state, batch_data, dynamic_weights)
+            state, loss, dynamic_weights, loss_e, loss_d, loss_r, loss_s = train_step_adaptive(state, batch_data, dynamic_weights)
         elif mode == "lagrange":
-            state, loss = train_step_lagrange(state, batch_data)
+            state, loss, loss_e, loss_d, loss_r, loss_s = train_step_lagrange(state, batch_data)
         else:
             raise ValueError(f"Unknown training mode: {mode}")
 
         losses.append(loss)
 
         if epoch % max(1, epochs // 10) == 0:
-            print(f"Epoch {epoch}/{epochs}, Loss: {loss:.6f}")
+            print(f"Epoch {epoch}/{epochs}, Total: {loss:.2f} | Energy: {loss_e:.2f} | Anode: {loss_d:.2f} | Cathode: {loss_r:.2f} | Shield: {loss_s:.2f}")
+
             if mode == "adaptive":
-                print(f"  Weights: {dynamic_weights}")
+                if len(dynamic_weights) > 3:
+                    print(f"  Weights: E={dynamic_weights[0]:.2f}, D={dynamic_weights[1]:.2f}, R={dynamic_weights[2]:.2f}, S={dynamic_weights[3]:.2f}")
+                else:
+                    print(f"  Weights: {dynamic_weights}")
             elif mode == "lagrange":
                 print(f"  Lambda D: {state.lambda_d:.4f}, Lambda R: {state.lambda_r:.4f}")
 

@@ -12,7 +12,7 @@ from src.pinncoat.geometry_utils import load_stl_surface, load_cathode_nas, gene
 from src.pinncoat.network import PotentialPINN, init_network
 from src.pinncoat.train import train_model
 
-def export_for_paraview(model, params, fluid_points, cathode_points, out_dir="data/output"):
+def export_for_paraview(model, params, fluid_points, cathode_points, shield_points=None, out_dir="data/output"):
     os.makedirs(out_dir, exist_ok=True)
 
     # Predict potentials
@@ -39,8 +39,17 @@ def export_for_paraview(model, params, fluid_points, cathode_points, out_dir="da
     fluid_vtk.save(os.path.join(out_dir, "fluid_results.vtp"))
     cathode_vtk.save(os.path.join(out_dir, "cathode_results.vtp"))
 
+    if shield_points is not None:
+        s_points_np = np.asarray(shield_points)
+        shield_vtk = pv.PolyData(s_points_np)
+        # If the model is provided, predict and save the potential, otherwise just save the geometry
+        if model is not None and params is not None:
+            phi_shield = model.apply({'params': params}, shield_points)
+            shield_vtk["Electric_Potential_V"] = np.asarray(phi_shield).flatten()
+        shield_vtk.save(os.path.join(out_dir, "shield_results.vtp"))
 
-def plot_results(model, params, fluid_points, cathode_points, L_char, center, V_scale):
+
+def plot_results(model, params, fluid_points, cathode_points, shield_points, L_char, center, V_scale):
     print("Predicting potentials for visualization...")
     phi_fluid = model.apply({'params': params}, fluid_points)
     phi_cathode = model.apply({'params': params}, cathode_points)
@@ -78,6 +87,16 @@ def plot_results(model, params, fluid_points, cathode_points, L_char, center, V_
         name="Cathode Surface Potential"
     ))
 
+    if shield_points is not None:
+        fig.add_trace(go.Scatter3d(
+            x=shield_points[:, 0],
+            y=shield_points[:, 1],
+            z=shield_points[:, 2],
+            mode='markers',
+            marker=dict(size=2, color='red', opacity=0.8),
+            name="Virtual Shield (0V Constraint)"
+        ))
+
     fig.update_layout(
         title="PINN predicted potential",
         scene=dict(
@@ -96,10 +115,10 @@ def main():
     cathode_path = "data/raw/cathode.nas"
 
     # Physical Constants
-    v_anode = 250.0
+    v_anode = 100.0
     v_cathode = 0.0
-    sigma = 1.5
-    r_film = 1.0
+    sigma = 0.2
+    r_film = 0.5
 
     print("Loading geometries...")
     # Geometry
@@ -109,32 +128,41 @@ def main():
     center = tuple((bounds[0] + bounds[1]) / 2.0)
     L_char = float(jnp.max(bounds[1] - bounds[0]) / 2.0)
 
-    anode_mesh, anode_points, anode_normals = load_stl_surface(anode_path, 2000)
-    cathode_mesh, cathode_points, cathode_normals = load_cathode_nas(cathode_path, 4000)
+    anode_mesh, anode_points, anode_normals = load_stl_surface(anode_path, 5000)
+    cathode_mesh, cathode_points, cathode_normals = load_cathode_nas(cathode_path, 30000)
 
     print("Generating fluid points...")
     fluid_points = generate_fluid_points(
         bath_mesh,
         obstacle_meshes=[anode_mesh, cathode_mesh],
-        num_points=10000,
+        num_points=100000,
         cathode_points=cathode_points,
         cathode_normals=cathode_normals
     )
 
+    print("Generating shield points...")
+    shield_offset = 0.0005
+    shield_points = cathode_points - shield_offset * cathode_normals
+
     print("Initializing network...")
     # Network Initialization
     key = jax.random.PRNGKey(42)
-    variables = init_network(key, input_shape=(1, 3), L_char=L_char, V_scale=v_anode, center=center)
+    variables = init_network(key, input_shape=(1, 3), L_char=L_char, V_scale=v_anode, center=center, L_fourier=4)
 
     # Extract params from initialized variables
     # init_network returns the full variables dict. The model uses variable collections,
     # typically "params"
     params = variables['params'] if 'params' in variables else variables
 
-    model = PotentialPINN(L_char=L_char, V_scale=v_anode, center=center)
+    model = PotentialPINN(L_char=L_char, V_scale=v_anode, center=center, L_fourier=4)
 
     # Optimizer Setup
-    tx = optax.adam(learning_rate=1e-3)
+    scheduler = optax.exponential_decay(
+    init_value=1e-3, 
+    transition_steps=5000, # Drop the rate every 5000 epochs
+    decay_rate=0.8         # Multiply the rate by 0.8 at each transition
+    )
+    tx = optax.adam(learning_rate=scheduler)
 
     print("Packaging data...")
     # Data Packaging
@@ -147,6 +175,7 @@ def main():
         'v_cathode': jnp.array(v_cathode, dtype=jnp.float32),
         'r_film': jnp.array(r_film, dtype=jnp.float32),
         'sigma': jnp.array(sigma, dtype=jnp.float32),
+        'x_shield': jnp.array(shield_points, dtype=jnp.float32),
     }
 
     print("Starting training...")
@@ -156,15 +185,16 @@ def main():
         params=params,
         tx=tx,
         batch_data=batch_data,
-        epochs=5000,
-        mode="fixed"
+        epochs=25000,
+        mode="fixed",
+        weights=(1.0, 100.0, 10.0, 100.0)
     )
 
     print("Training completed.")
 
-    export_for_paraview(model, state.params, fluid_points, cathode_points)
+    export_for_paraview(model, state.params, fluid_points, cathode_points, shield_points=shield_points)
 
-    plot_results(model, state.params, fluid_points, cathode_points, L_char, center, v_anode)
+    plot_results(model, state.params, fluid_points, cathode_points, shield_points, L_char, center, v_anode)
 
 if __name__ == "__main__":
     main()
