@@ -145,16 +145,21 @@ def main():
     shield_points = cathode_points - shield_offset * cathode_normals
 
     print("Initializing network...")
+    # Calculate the exact spatial bounds of the fluid bath
+    x_min_val = jnp.array(np.min(fluid_points, axis=0))
+    x_max_val = jnp.array(np.max(fluid_points, axis=0))
+
     # Network Initialization
     key = jax.random.PRNGKey(42)
-    variables = init_network(key, input_shape=(1, 3), L_char=L_char, V_scale=v_anode, center=center, L_fourier=4)
+    variables = init_network(key, x_min=x_min_val, x_max=x_max_val, V0=100.0, input_shape=(1, 3), L_fourier=4)
 
     # Extract params from initialized variables
     # init_network returns the full variables dict. The model uses variable collections,
     # typically "params"
     params = variables['params'] if 'params' in variables else variables
 
-    model = PotentialPINN(L_char=L_char, V_scale=v_anode, center=center, L_fourier=4)
+    # Initialize the model with the dynamic bounds
+    model = PotentialPINN(x_min=x_min_val, x_max=x_max_val, V0=100.0, L_fourier=4)
 
     # Optimizer Setup
     scheduler = optax.exponential_decay(

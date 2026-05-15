@@ -8,8 +8,10 @@ class TestPhysicsLosses(unittest.TestCase):
 
     def setUp(self):
         self.rng_key = jax.random.PRNGKey(0)
-        self.model = PotentialPINN()
-        self.params = init_network(self.rng_key, input_shape=(1, 3))
+        self.x_min = jnp.array([-1.0, -1.0, -1.0])
+        self.x_max = jnp.array([1.0, 1.0, 1.0])
+        self.model = PotentialPINN(x_min=self.x_min, x_max=self.x_max)
+        self.params = init_network(self.rng_key, x_min=self.x_min, x_max=self.x_max, input_shape=(1, 3))
 
         # Dummy data
         self.N = 10
