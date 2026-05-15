@@ -10,7 +10,7 @@ import numpy as np
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.pinncoat.geometry_utils import load_stl_surface, load_cathode_nas, generate_fluid_points
 from src.pinncoat.network import PotentialPINN, init_network
-from src.pinncoat.train import train_model
+from src.pinncoat.train import train_model, train_lbfgs
 
 def export_for_paraview(model, params, fluid_points, cathode_points, shield_points=None, out_dir="data/output"):
     os.makedirs(out_dir, exist_ok=True)
@@ -190,23 +190,33 @@ def main():
     }
 
     print("Starting training...")
-    # Execution
+    # 1. Phase 1: Adam
     state, losses = train_model(
         model=model,
         params=params,
         tx=tx,
         batch_data=batch_data,
-        epochs=50000,
+        epochs=20000,
         mode="fixed",
         weights=(1.0, 1000.0, 10.0, 1000.0, 500.0),
         fluid_method="laplace"  # Toggle this to 'energy' to revert to Deep Ritz
     )
 
-    print("Training completed.")
+    print("Adam Phase 1 completed.")
 
-    export_for_paraview(model, state.params, fluid_points, cathode_points, shield_points=shield_points)
+    # 2. Phase 2: L-BFGS
+    final_params = train_lbfgs(
+        model=model,
+        init_params=state.params, # Pass the weights Adam found
+        batch_data=batch_data,
+        weights=(1.0, 1000.0, 10.0, 1000.0, 500.0),
+        fluid_method="laplace",
+        maxiter=10000 # Let L-BFGS run until it solves it
+    )
 
-    plot_results(model, state.params, fluid_points, cathode_points, shield_points, L_char, center, v_anode)
+    export_for_paraview(model, final_params, fluid_points, cathode_points, shield_points=shield_points)
+
+    plot_results(model, final_params, fluid_points, cathode_points, shield_points, L_char, center, v_anode)
 
 if __name__ == "__main__":
     main()

@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as jnp
 import optax
+import jaxopt
 from flax.training import train_state
 from flax import struct
 from functools import partial
@@ -212,3 +213,24 @@ def train_model(model, params, tx, batch_data, epochs=100, mode="fixed", weights
                 print(f"  Lambda D: {state.lambda_d:.4f}, Lambda R: {state.lambda_r:.4f}")
 
     return state, losses
+
+def train_lbfgs(model, init_params, batch_data, weights, fluid_method, maxiter=5000):
+    """
+    Phase 2: L-BFGS Optimization to resolve stiff boundaries.
+    """
+    print("Starting Phase 2: L-BFGS Optimization...")
+
+    # Define a wrapper that returns ONLY the total loss (a scalar) for jaxopt
+    def objective_fn(params):
+        # Call the existing compute_total_loss function
+        loss, _ = compute_total_loss({'params': params}, model.apply, **batch_data, weights=weights, fluid_method=fluid_method)
+        return loss
+
+    # Initialize the L-BFGS optimizer via ScipyMinimize
+    lbfgs = jaxopt.ScipyMinimize(fun=objective_fn, method="L-BFGS-B", maxiter=maxiter)
+
+    # Run the optimizer starting from the final Adam weights
+    state = lbfgs.run(init_params)
+
+    print(f"L-BFGS finished with status: {state.state.status}")
+    return state.params
