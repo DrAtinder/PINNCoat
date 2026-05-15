@@ -14,6 +14,19 @@ def get_phi_and_grad(params, model, x):
     # Calculate both value and gradient, then vmap over the batch dimension
     return jax.vmap(jax.value_and_grad(phi_scalar, argnums=1), in_axes=(None, 0))(params, x)
 
+def laplace_loss(params, model, x_fluid):
+    """Computes the Strong Form PDE residual: mean((nabla^2 phi)^2)"""
+    def get_laplacian(x):
+        def phi_single(xi):
+            apply_fn = model.apply if hasattr(model, 'apply') else model
+            return jnp.squeeze(apply_fn(params, xi.reshape(1, -1)))
+        # jax.hessian computes the exact 3x3 matrix of second derivatives
+        H = jax.hessian(phi_single)(x)
+        return jnp.trace(H) # Trace is d2/dx2 + d2/dy2 + d2/dz2
+
+    laplacians = jax.vmap(get_laplacian)(x_fluid)
+    return jnp.mean(laplacians**2)
+
 def energy_loss(params, model, x_fluid):
     """
     Computes the Deep Ritz energy functional over fluid points.
@@ -59,11 +72,22 @@ def shield_loss(params, model, x_shield, v_cathode):
     phi_shield = apply_fn(params, x_shield)[:, 0]
     return jnp.mean((phi_shield - v_cathode)**2)
 
-def compute_total_loss(params, model, x_fluid, x_anode, x_cathode, normals, v_anode, v_cathode, r_film, sigma, x_shield=None, weights=(1.0, 1.0, 1.0, 100.0)):
+def sensor_loss(params, model, x_sensor, v_sensor_true):
     """
-    Computes the total loss as a weighted sum of energy, Dirichlet, Robin, and shield losses.
+    Supervised MSE loss for sensor data assimilation.
     """
-    loss_e = energy_loss(params, model, x_fluid)
+    apply_fn = model.apply if hasattr(model, 'apply') else model
+    v_pred = apply_fn(params, x_sensor)[:, 0]
+    return jnp.mean((v_pred - v_sensor_true)**2)
+
+def compute_total_loss(params, model, x_fluid, x_anode, x_cathode, normals, v_anode, v_cathode, r_film, sigma, x_shield=None, x_sensor=None, v_sensor=None, weights=(1.0, 1.0, 1.0, 100.0), fluid_method="energy"):
+    """
+    Computes the total loss as a weighted sum of energy, Dirichlet, Robin, shield, and sensor losses.
+    """
+    if fluid_method == "laplace":
+        loss_e = laplace_loss(params, model, x_fluid)
+    else:
+        loss_e = energy_loss(params, model, x_fluid)
     loss_d = dirichlet_loss(params, model, x_anode, v_anode)
     loss_r = robin_loss(params, model, x_cathode, normals, v_cathode, r_film, sigma)
 
@@ -73,5 +97,11 @@ def compute_total_loss(params, model, x_fluid, x_anode, x_cathode, normals, v_an
         loss_s = shield_loss(params, model, x_shield, v_cathode)
         weight_s = weights[3]
 
-    total_loss = weights[0] * loss_e + weights[1] * loss_d + weights[2] * loss_r + weight_s * loss_s
-    return total_loss, (loss_e, loss_d, loss_r, loss_s)
+    loss_sens = 0.0
+    weight_sens = 0.0
+    if x_sensor is not None and v_sensor is not None and len(weights) > 4:
+        loss_sens = sensor_loss(params, model, x_sensor, v_sensor)
+        weight_sens = weights[4]
+
+    total_loss = weights[0] * loss_e + weights[1] * loss_d + weights[2] * loss_r + weight_s * loss_s + weight_sens * loss_sens
+    return total_loss, (loss_e, loss_d, loss_r, loss_s, loss_sens)

@@ -5,10 +5,10 @@ class PotentialPINN(nn.Module):
     """
     Physics-Informed Neural Network for predicting electric potential.
     """
+    x_min: jnp.ndarray
+    x_max: jnp.ndarray
+    V0: float = 100.0
     features: list[int] = (64, 64, 64, 64)
-    L_char: float = 1.0
-    V_scale: float = 1.0
-    center: tuple = (0.0, 0.0, 0.0)
     L_fourier: int = 4
 
     @nn.compact
@@ -22,14 +22,14 @@ class PotentialPINN(nn.Module):
         Returns:
             jnp.ndarray: Output array of shape (N, 1) representing electric potential.
         """
-        c = jnp.array(self.center, dtype=x.dtype)
-        x = (x - c) / self.L_char
+        # Dynamic Min-Max Scaling: Maps physical [x_min, x_max] to exactly [-1, 1]
+        x_norm = 2.0 * (x - self.x_min) / (self.x_max - self.x_min) - 1.0
 
-        features_list = [x]
+        features_list = [x_norm]
         for i in range(self.L_fourier):
             freq = (2.0 ** i) * jnp.pi
-            features_list.append(jnp.sin(freq * x))
-            features_list.append(jnp.cos(freq * x))
+            features_list.append(jnp.sin(freq * x_norm))
+            features_list.append(jnp.cos(freq * x_norm))
 
         F = jnp.concatenate(features_list, axis=-1)
 
@@ -47,26 +47,31 @@ class PotentialPINN(nn.Module):
             H = H * U + V
 
         # Final output layer without activation function
-        out = nn.Dense(1)(H)
-        out = out * self.V_scale
-        return out
+        z = nn.Dense(1)(H)
 
-def init_network(rng_key, input_shape=(1, 3), L_char=1.0, V_scale=1.0, center=(0.0, 0.0, 0.0), L_fourier=4):
+        # Physical Output Bounds: Sigmoid forces output between [0, 1]
+        # Multiplying by V0 scales it to exactly [0, V0], preventing negative potentials
+        phi_norm = nn.sigmoid(z)
+        phi_physical = phi_norm * self.V0
+
+        return phi_physical
+
+def init_network(rng_key, x_min, x_max, V0=100.0, input_shape=(1, 3), L_fourier=4):
     """
     Initializes the PotentialPINN network.
 
     Args:
         rng_key (jax.random.PRNGKey): JAX random key for initialization.
+        x_min (jnp.ndarray): Minimum spatial bounds.
+        x_max (jnp.ndarray): Maximum spatial bounds.
+        V0 (float): Maximum physical voltage.
         input_shape (tuple): Shape of the input data. Defaults to (1, 3).
-        L_char (float): Characteristic length for spatial scaling.
-        V_scale (float): Voltage scaling factor.
-        center (tuple): Center of the spatial domain.
         L_fourier (int): Number of frequency bands for Fourier Features.
 
     Returns:
         dict: Initialized network variables (weights).
     """
-    model = PotentialPINN(L_char=L_char, V_scale=V_scale, center=center, L_fourier=L_fourier)
+    model = PotentialPINN(x_min=x_min, x_max=x_max, V0=V0, L_fourier=L_fourier)
     dummy_input = jnp.zeros(input_shape)
     variables = model.init(rng_key, dummy_input)
     return variables

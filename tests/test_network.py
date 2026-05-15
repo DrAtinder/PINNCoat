@@ -8,14 +8,18 @@ class TestPotentialPINN(unittest.TestCase):
         # Initialize random key
         rng_key = jax.random.PRNGKey(0)
 
+        # Bounds
+        x_min = jnp.array([-1.0, -1.0, -1.0])
+        x_max = jnp.array([1.0, 1.0, 1.0])
+
         # Initialize the network
-        variables = init_network(rng_key, input_shape=(10, 3))
+        variables = init_network(rng_key, x_min=x_min, x_max=x_max, input_shape=(10, 3))
 
         # Create dummy point cloud array of shape (10, 3)
         dummy_points = jax.random.normal(rng_key, (10, 3))
 
         # Initialize the model
-        model = PotentialPINN()
+        model = PotentialPINN(x_min=x_min, x_max=x_max)
 
         # Pass dummy points through the network
         output = model.apply(variables, dummy_points)

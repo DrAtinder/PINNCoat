@@ -10,7 +10,7 @@ import numpy as np
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.pinncoat.geometry_utils import load_stl_surface, load_cathode_nas, generate_fluid_points
 from src.pinncoat.network import PotentialPINN, init_network
-from src.pinncoat.train import train_model
+from src.pinncoat.train import train_model, train_lbfgs
 
 def export_for_paraview(model, params, fluid_points, cathode_points, shield_points=None, out_dir="data/output"):
     os.makedirs(out_dir, exist_ok=True)
@@ -145,16 +145,21 @@ def main():
     shield_points = cathode_points - shield_offset * cathode_normals
 
     print("Initializing network...")
+    # Calculate the exact spatial bounds of the fluid bath
+    x_min_val = jnp.array(np.min(fluid_points, axis=0))
+    x_max_val = jnp.array(np.max(fluid_points, axis=0))
+
     # Network Initialization
     key = jax.random.PRNGKey(42)
-    variables = init_network(key, input_shape=(1, 3), L_char=L_char, V_scale=v_anode, center=center, L_fourier=4)
+    variables = init_network(key, x_min=x_min_val, x_max=x_max_val, V0=100.0, input_shape=(1, 3), L_fourier=4)
 
     # Extract params from initialized variables
     # init_network returns the full variables dict. The model uses variable collections,
     # typically "params"
     params = variables['params'] if 'params' in variables else variables
 
-    model = PotentialPINN(L_char=L_char, V_scale=v_anode, center=center, L_fourier=4)
+    # Initialize the model with the dynamic bounds
+    model = PotentialPINN(x_min=x_min_val, x_max=x_max_val, V0=100.0, L_fourier=4)
 
     # Optimizer Setup
     scheduler = optax.exponential_decay(
@@ -165,6 +170,10 @@ def main():
     tx = optax.adam(learning_rate=scheduler)
 
     print("Packaging data...")
+    # Define the Sensor Anchor (80-90% Confidence)
+    x_sensor = np.array([[0.056, 0.033, 0.12]], dtype=np.float32)
+    v_sensor_true = np.array([54.0], dtype=np.float32)
+
     # Data Packaging
     batch_data = {
         'x_fluid': jnp.array(fluid_points, dtype=jnp.float32),
@@ -176,25 +185,38 @@ def main():
         'r_film': jnp.array(r_film, dtype=jnp.float32),
         'sigma': jnp.array(sigma, dtype=jnp.float32),
         'x_shield': jnp.array(shield_points, dtype=jnp.float32),
+        'x_sensor': jnp.array(x_sensor, dtype=jnp.float32),
+        'v_sensor': jnp.array(v_sensor_true, dtype=jnp.float32),
     }
 
     print("Starting training...")
-    # Execution
+    # 1. Phase 1: Adam
     state, losses = train_model(
         model=model,
         params=params,
         tx=tx,
         batch_data=batch_data,
-        epochs=25000,
+        epochs=20000,
         mode="fixed",
-        weights=(1.0, 100.0, 10.0, 100.0)
+        weights=(1.0, 1000.0, 10.0, 1000.0, 500.0),
+        fluid_method="laplace"  # Toggle this to 'energy' to revert to Deep Ritz
     )
 
-    print("Training completed.")
+    print("Adam Phase 1 completed.")
 
-    export_for_paraview(model, state.params, fluid_points, cathode_points, shield_points=shield_points)
+    # 2. Phase 2: L-BFGS
+    final_params = train_lbfgs(
+        model=model,
+        init_params=state.params, # Pass the weights Adam found
+        batch_data=batch_data,
+        weights=(1.0, 1000.0, 10.0, 1000.0, 500.0),
+        fluid_method="laplace",
+        maxiter=10000 # Let L-BFGS run until it solves it
+    )
 
-    plot_results(model, state.params, fluid_points, cathode_points, shield_points, L_char, center, v_anode)
+    export_for_paraview(model, final_params, fluid_points, cathode_points, shield_points=shield_points)
+
+    plot_results(model, final_params, fluid_points, cathode_points, shield_points, L_char, center, v_anode)
 
 if __name__ == "__main__":
     main()
